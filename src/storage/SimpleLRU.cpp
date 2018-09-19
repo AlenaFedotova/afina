@@ -66,12 +66,14 @@ bool SimpleLRU::Delete(const std::string &key) {
 }
 
 // See MapBasedGlobalLockImpl.h
-bool SimpleLRU::Get(const std::string &key, std::string &value) const { 
+bool SimpleLRU::Get(const std::string &key, std::string &value) { 
 	auto ind = _lru_index.find(key);
 	if (ind == _lru_index.end())
 		return false;
 	value = ind->second.get().value;
-	return true;
+	if (!Delete(key))
+		return false;
+	return PutIfAbsent(key, value);
 }
 
 bool SimpleLRU::_DeleteOld() {
