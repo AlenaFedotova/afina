@@ -79,6 +79,10 @@ private:
     bool _Erase_from_list(lru_node &node);
     
     bool _Update_in_list(lru_node &node, const std::string &value);
+    
+    bool _insert_ptr(lru_node &node);
+    
+    bool _erase_ptr(lru_node &node);
 };
 
 } // namespace Backend
