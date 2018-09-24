@@ -5,6 +5,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <iostream>
 
 #include <afina/Storage.h>
 
@@ -47,12 +48,12 @@ public:
 private:
     // LRU cache node
     using lru_node = struct lru_node {
-        std::string key;
+        const std::string key;
         std::string value;
         lru_node * prev;
         std::unique_ptr<lru_node> next;
         
-        lru_node(const std::string &key, const std::string value, lru_node * prev) : key(key), value(value), prev(prev), next(nullptr) {}
+        lru_node(const std::string key, const std::string value, lru_node * prev) : key(key), value(value), prev(prev), next(nullptr) {}
         lru_node() : key(""), value(""), prev(nullptr), next(nullptr) {}
     };
 
@@ -69,13 +70,15 @@ private:
     lru_node * _lru_tail;
 
     // Index of nodes from list above, allows fast random access to elements by lru_node#key
-    std::map<std::string, std::reference_wrapper<lru_node>> _lru_index;
+    std::map<std::reference_wrapper<const std::string>, std::reference_wrapper<lru_node>, std::less<std::string>> _lru_index;
     
     bool _DeleteOld();
     
     bool _Insert_to_list(const std::string &key, const std::string &value);
     
     bool _Erase_from_list(lru_node &node);
+    
+    bool _Update_in_list(lru_node &node, const std::string &value);
 };
 
 } // namespace Backend
