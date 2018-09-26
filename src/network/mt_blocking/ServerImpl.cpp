@@ -74,7 +74,7 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
 
     running.store(true);
     max_workers = n_workers;
-    cur_workers = 0;
+    cur_workers.store(0);
     _thread = std::thread(&ServerImpl::OnRun, this);
 }
 
@@ -128,7 +128,7 @@ void ServerImpl::OnRun() {
             setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
         }
 
-		if (cur_workers >= max_workers) {
+		if (cur_workers.load() >= max_workers) {
 			close(client_socket);
 			continue;
 		}
@@ -151,7 +151,7 @@ void ServerImpl::OnRun() {
 }
 
 void ServerImpl::WorkerFunction(int client_socket) {
-	cur_workers++;
+	cur_workers.store(cur_workers.load() + 1);
     // Here is connection state
     // - parser: parse state of the stream
     // - command_to_execute: last command parsed out of stream
@@ -244,7 +244,7 @@ void ServerImpl::WorkerFunction(int client_socket) {
     command_to_execute.reset();
     argument_for_command.resize(0);
     parser.Reset();
-    cur_workers--;
+    cur_workers.store(cur_workers.load() - 1);
 }
 
 } // namespace MTblocking
