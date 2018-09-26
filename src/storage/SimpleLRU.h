@@ -22,6 +22,9 @@ public:
 
     ~SimpleLRU() {
         _lru_index.clear();
+        if (_lru_head == nullptr) {
+        	return;
+        }
         while (_lru_head->next != nullptr) {
         	lru_node * tmp = _lru_head->next->prev;
         	_lru_head.swap(_lru_head->next);
