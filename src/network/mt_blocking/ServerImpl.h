@@ -3,7 +3,8 @@
 
 #include <atomic>
 #include <thread>
-#include <vector>
+#include <map>
+#include <condition_variable>
 
 #include <afina/network/Server.h>
 
@@ -55,11 +56,12 @@ private:
     std::thread _thread;
     
     uint32_t max_workers;
-    std::atomic<uint32_t> cur_workers;
     
     void WorkerFunction(int client_socket);
     
-    std::vector<std::thread> workers;
+    std::map<int, std::thread> workers;
+    std::condition_variable cv;
+    std::mutex mut;
 };
 
 } // namespace MTblocking
