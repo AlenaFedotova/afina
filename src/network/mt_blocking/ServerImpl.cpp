@@ -82,18 +82,18 @@ void ServerImpl::Stop() {
     running.store(false);
     shutdown(_server_socket, SHUT_RDWR);
     {
-    	std::lock_guard<std::mutex> lck(mut);
-    	for (std::pair<const int, std::thread> & element : workers) {
-    		shutdown(element.first, SHUT_RD);
-    	}
+        std::lock_guard<std::mutex> lck(mut);
+        for (std::pair<const int, std::thread> & element : workers) {
+            shutdown(element.first, SHUT_RD);
+        }
     }
 }
 
 // See Server.h
 void ServerImpl::Join() {
-	std::unique_lock<std::mutex> lck(mut);
+    std::unique_lock<std::mutex> lck(mut);
     while (workers.size() > 0) {
-    	cv.wait(lck);
+        cv.wait(lck);
     }
     assert(_thread.joinable());
     _thread.join();
@@ -134,15 +134,15 @@ void ServerImpl::OnRun() {
             setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
         }
 
-		{
-			std::lock_guard<std::mutex> lck(mut);
-			if (workers.size() >= max_workers) {
-				close(client_socket);
-				continue;
-			}
-		
-			workers.insert(std::pair<int, std::thread>(client_socket, std::thread(&ServerImpl::WorkerFunction, this, client_socket)));
-		}
+        {
+            std::lock_guard<std::mutex> lck(mut);
+            if (workers.size() >= max_workers) {
+                close(client_socket);
+                continue;
+            }
+
+            workers.insert(std::pair<int, std::thread>(client_socket, std::thread(&ServerImpl::WorkerFunction, this, client_socket)));
+        }
     }
     _logger->warn("Network stopped");
 }
@@ -157,7 +157,7 @@ void ServerImpl::WorkerFunction(int client_socket) {
     Protocol::Parser parser;
     std::string argument_for_command;
     std::unique_ptr<Execute::Command> command_to_execute;
-	try {
+    try {
         int readed_bytes = -1;
         char client_buffer[4096];
         while (running.load() && (readed_bytes = read(client_socket, client_buffer, sizeof(client_buffer))) > 0) {
@@ -168,7 +168,7 @@ void ServerImpl::WorkerFunction(int client_socket) {
             // - read#0: [<command1 start>]
             // - read#1: [<command1 end> <argument> <command2> <argument for command 2> <command3> ... ]
             while (running.load() && readed_bytes > 0) {
-            	std::this_thread::sleep_for(std::chrono::seconds(3));
+                std::this_thread::sleep_for(std::chrono::seconds(3));
                 _logger->debug("Process {} bytes", readed_bytes);
                 // There is no command yet
                 if (!command_to_execute) {
@@ -236,11 +236,11 @@ void ServerImpl::WorkerFunction(int client_socket) {
     
     // We are done with this connection
     {
-    	std::lock_guard<std::mutex> lck(mut);
-    	close(client_socket);
-    	workers[client_socket].detach();
-    	workers.erase(client_socket);
-    	cv.notify_one();
+        std::lock_guard<std::mutex> lck(mut);
+        close(client_socket);
+        workers[client_socket].detach();
+        workers.erase(client_socket);
+        cv.notify_one();
     }
 }
 
