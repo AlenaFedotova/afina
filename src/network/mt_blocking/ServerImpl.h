@@ -47,7 +47,7 @@ private:
     // Atomic flag to notify threads when it is time to stop. Note that
     // flag must be atomic in order to safely publisj changes cross thread
     // bounds
-    std::atomic<bool> running;
+    std::atomic<bool> _running;
 
     // Server socket to accept connections on
     int _server_socket;
@@ -55,13 +55,13 @@ private:
     // Thread to run network on
     std::thread _thread;
     
-    uint32_t max_workers;
+    uint32_t _max_workers;
     
-    void WorkerFunction(int client_socket);
+    void _WorkerFunction(int client_socket);
     
-    std::map<int, std::thread> workers;
-    std::condition_variable erase_worker;
-    std::mutex workers_mutex;
+    std::mutex _workers_mutex;
+    std::map<int, std::thread> _workers;
+    std::condition_variable _erase_worker;
 };
 
 } // namespace MTblocking

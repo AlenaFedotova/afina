@@ -72,18 +72,18 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
         throw std::runtime_error("Socket listen() failed");
     }
 
-    running.store(true);
-    max_workers = n_workers;
+    _running.store(true);
+    _max_workers = n_workers;
     _thread = std::thread(&ServerImpl::OnRun, this);
 }
 
 // See Server.h
 void ServerImpl::Stop() {
-    running.store(false);
+    _running.store(false);
     shutdown(_server_socket, SHUT_RDWR);
     {
-        std::lock_guard<std::mutex> lck(workers_mutex);
-        for (std::pair<const int, std::thread> & element : workers) {
+        std::lock_guard<std::mutex> lck(_workers_mutex);
+        for (std::pair<const int, std::thread> & element : _workers) {
             shutdown(element.first, SHUT_RD);
         }
     }
@@ -91,9 +91,11 @@ void ServerImpl::Stop() {
 
 // See Server.h
 void ServerImpl::Join() {
-    std::unique_lock<std::mutex> lck(workers_mutex);
-    while (workers.size() > 0) {
-        erase_worker.wait(lck);
+    {
+        std::unique_lock<std::mutex> lck(_workers_mutex);
+        while (_workers.size() > 0) {
+            _erase_worker.wait(lck);
+        }
     }
     assert(_thread.joinable());
     _thread.join();
@@ -102,7 +104,7 @@ void ServerImpl::Join() {
 
 // See Server.h
 void ServerImpl::OnRun() {
-    while (running.load()) {
+    while (_running.load()) {
         _logger->debug("waiting for connection...");
 
         // The call to accept() blocks until the incoming connection arrives
@@ -135,19 +137,19 @@ void ServerImpl::OnRun() {
         }
 
         {
-            std::lock_guard<std::mutex> lck(workers_mutex);
-            if (workers.size() >= max_workers) {
+            std::lock_guard<std::mutex> lck(_workers_mutex);
+            if (_workers.size() >= _max_workers) {
                 close(client_socket);
                 continue;
             }
 
-            workers.insert(std::pair<int, std::thread>(client_socket, std::thread(&ServerImpl::WorkerFunction, this, client_socket)));
+            _workers.insert(std::pair<int, std::thread>(client_socket, std::thread(&ServerImpl::_WorkerFunction, this, client_socket)));
         }
     }
     _logger->warn("Network stopped");
 }
 
-void ServerImpl::WorkerFunction(int client_socket) {
+void ServerImpl::_WorkerFunction(int client_socket) {
     // Here is connection state
     // - parser: parse state of the stream
     // - command_to_execute: last command parsed out of stream
@@ -160,14 +162,14 @@ void ServerImpl::WorkerFunction(int client_socket) {
     try {
         int readed_bytes = -1;
         char client_buffer[4096];
-        while (running.load() && (readed_bytes = read(client_socket, client_buffer, sizeof(client_buffer))) > 0) {
+        while (_running.load() && (readed_bytes = read(client_socket, client_buffer, sizeof(client_buffer))) > 0) {
             _logger->debug("Got {} bytes from socket", readed_bytes);
 
             // Single block of data readed from the socket could trigger inside actions a multiple times,
             // for example:
             // - read#0: [<command1 start>]
             // - read#1: [<command1 end> <argument> <command2> <argument for command 2> <command3> ... ]
-            while (running.load() && readed_bytes > 0) {
+            while (_running.load() && readed_bytes > 0) {
                 std::this_thread::sleep_for(std::chrono::seconds(3));
                 _logger->debug("Process {} bytes", readed_bytes);
                 // There is no command yet
@@ -234,14 +236,16 @@ void ServerImpl::WorkerFunction(int client_socket) {
         _logger->error("Failed to process connection on descriptor {}: {}", client_socket, ex.what());
     }
     
+    int tmp = client_socket;
+    close(client_socket);
     // We are done with this connection
     {
-        std::lock_guard<std::mutex> lck(workers_mutex);
-        close(client_socket);
-        workers[client_socket].detach();
-        workers.erase(client_socket);
-        if (!running.load())
-            erase_worker.notify_one();
+        std::lock_guard<std::mutex> lck(_workers_mutex);
+        auto it = _workers.find(tmp);
+        it->second.detach();
+        _workers.erase(it);
+        if (_workers.size() == 0)
+            _erase_worker.notify_all();
     }
 }
 
