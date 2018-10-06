@@ -82,7 +82,7 @@ void ServerImpl::Stop() {
     running.store(false);
     shutdown(_server_socket, SHUT_RDWR);
     {
-        std::lock_guard<std::mutex> lck(mut);
+        std::lock_guard<std::mutex> lck(workers_mutex);
         for (std::pair<const int, std::thread> & element : workers) {
             shutdown(element.first, SHUT_RD);
         }
@@ -91,9 +91,9 @@ void ServerImpl::Stop() {
 
 // See Server.h
 void ServerImpl::Join() {
-    std::unique_lock<std::mutex> lck(mut);
+    std::unique_lock<std::mutex> lck(workers_mutex);
     while (workers.size() > 0) {
-        cv.wait(lck);
+        erase_worker.wait(lck);
     }
     assert(_thread.joinable());
     _thread.join();
@@ -135,7 +135,7 @@ void ServerImpl::OnRun() {
         }
 
         {
-            std::lock_guard<std::mutex> lck(mut);
+            std::lock_guard<std::mutex> lck(workers_mutex);
             if (workers.size() >= max_workers) {
                 close(client_socket);
                 continue;
@@ -236,11 +236,12 @@ void ServerImpl::WorkerFunction(int client_socket) {
     
     // We are done with this connection
     {
-        std::lock_guard<std::mutex> lck(mut);
+        std::lock_guard<std::mutex> lck(workers_mutex);
         close(client_socket);
         workers[client_socket].detach();
         workers.erase(client_socket);
-        cv.notify_one();
+        if (!running.load())
+            erase_worker.notify_one();
     }
 }
 

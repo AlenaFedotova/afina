@@ -60,8 +60,8 @@ private:
     void WorkerFunction(int client_socket);
     
     std::map<int, std::thread> workers;
-    std::condition_variable cv;
-    std::mutex mut;
+    std::condition_variable erase_worker;
+    std::mutex workers_mutex;
 };
 
 } // namespace MTblocking
