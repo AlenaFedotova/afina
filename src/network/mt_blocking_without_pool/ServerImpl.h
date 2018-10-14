@@ -7,7 +7,6 @@
 #include <condition_variable>
 
 #include <afina/network/Server.h>
-#include <afina/Executor.h>
 
 namespace spdlog {
 class logger;
@@ -56,9 +55,13 @@ private:
     // Thread to run network on
     std::thread _thread;
     
+    uint32_t _max_workers;
+    
     void _WorkerFunction(int client_socket);
     
-    Executor _executor;
+    std::mutex _workers_mutex;
+    std::map<int, std::thread> _workers;
+    std::condition_variable _erase_worker;
 };
 
 } // namespace MTblocking

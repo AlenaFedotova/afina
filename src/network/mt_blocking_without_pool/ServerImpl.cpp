@@ -28,7 +28,7 @@ namespace Network {
 namespace MTblocking {
 
 // See Server.h
-ServerImpl::ServerImpl(std::shared_ptr<Afina::Storage> ps, std::shared_ptr<Logging::Service> pl) : Server(ps, pl), _executor("executor", 10, 20, 10, 3000) {}
+ServerImpl::ServerImpl(std::shared_ptr<Afina::Storage> ps, std::shared_ptr<Logging::Service> pl) : Server(ps, pl) {}
 
 // See Server.h
 ServerImpl::~ServerImpl() {}
@@ -73,6 +73,7 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
     }
 
     _running.store(true);
+    _max_workers = n_workers;
     _thread = std::thread(&ServerImpl::OnRun, this);
 }
 
@@ -80,11 +81,22 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
 void ServerImpl::Stop() {
     _running.store(false);
     shutdown(_server_socket, SHUT_RDWR);
-    _executor.Stop();
+    {
+        std::lock_guard<std::mutex> lck(_workers_mutex);
+        for (std::pair<const int, std::thread> & element : _workers) {
+            shutdown(element.first, SHUT_RD);
+        }
+    }
 }
 
 // See Server.h
 void ServerImpl::Join() {
+    {
+        std::unique_lock<std::mutex> lck(_workers_mutex);
+        while (_workers.size() > 0) {
+            _erase_worker.wait(lck);
+        }
+    }
     assert(_thread.joinable());
     _thread.join();
     close(_server_socket);
@@ -123,10 +135,15 @@ void ServerImpl::OnRun() {
             tv.tv_usec = 0;
             setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
         }
-        
-        bool if_exec = _executor.Execute(&ServerImpl::_WorkerFunction, this, client_socket);
-        if (!if_exec) {
-            close(client_socket);
+
+        {
+            std::lock_guard<std::mutex> lck(_workers_mutex);
+            if (_workers.size() >= _max_workers) {
+                close(client_socket);
+                continue;
+            }
+
+            _workers.insert(std::pair<int, std::thread>(client_socket, std::thread(&ServerImpl::_WorkerFunction, this, client_socket)));
         }
     }
     _logger->warn("Network stopped");
@@ -218,8 +235,18 @@ void ServerImpl::_WorkerFunction(int client_socket) {
     } catch (std::runtime_error &ex) {
         _logger->error("Failed to process connection on descriptor {}: {}", client_socket, ex.what());
     }
+    
+    int tmp = client_socket;
     close(client_socket);
     // We are done with this connection
+    {
+        std::lock_guard<std::mutex> lck(_workers_mutex);
+        auto it = _workers.find(tmp);
+        it->second.detach();
+        _workers.erase(it);
+        if (_workers.size() == 0)
+            _erase_worker.notify_all();
+    }
 }
 
 } // namespace MTblocking

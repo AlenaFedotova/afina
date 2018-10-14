@@ -7,7 +7,14 @@
 #include <mutex>
 #include <queue>
 #include <string>
+#include <iostream>
 #include <thread>
+#include <spdlog/logger.h>
+#include <afina/logging/Service.h>
+
+namespace spdlog {
+class logger;
+}
 
 namespace Afina {
 
@@ -15,6 +22,7 @@ namespace Afina {
  * # Thread pool
  */
 class Executor {
+public:
     enum class State {
         // Threadpool is fully operational, tasks could be added and get executed
         kRun,
@@ -23,11 +31,11 @@ class Executor {
         // completed as requested
         kStopping,
 
-        // Threadppol is stopped
+        // Threadpool is stopped
         kStopped
     };
 
-    Executor(std::string name, int size);
+    Executor(std::string name, int low_watermark, int hight_watermark, int max_queue_size, int idle_time);
     ~Executor();
 
     /**
@@ -48,15 +56,22 @@ class Executor {
     template <typename F, typename... Types> bool Execute(F &&func, Types... args) {
         // Prepare "task"
         auto exec = std::bind(std::forward<F>(func), std::forward<Types>(args)...);
+        int cur_free;
+        {
+            std::unique_lock<std::mutex> lock(this->_tasks_mutex);
+            if (_state.load() != State::kRun || _tasks.size() >= _max_queue_size) {
+                std::cout << "queue is full\n";
+                return false;
+            }
 
-        std::unique_lock<std::mutex> lock(this->mutex);
-        if (state != State::kRun) {
-            return false;
+            // Enqueue new task
+            _tasks.push_back(exec);
+            cur_free = _free_threads.load();
+            _empty_condition.notify_one();
         }
-
-        // Enqueue new task
-        tasks.push_back(exec);
-        empty_condition.notify_one();
+        if (cur_free == 0) {
+            _add_thread();
+        }
         return true;
     }
 
@@ -75,28 +90,47 @@ private:
     /**
      * Mutex to protect state below from concurrent modification
      */
-    std::mutex mutex;
+    std::mutex _tasks_mutex;
+    std::mutex _threads_mutex;
 
     /**
      * Conditional variable to await new data in case of empty queue
      */
-    std::condition_variable empty_condition;
+    std::condition_variable _empty_condition;
+    
+    /**
+     * Conditional variable to await finish all threads
+     */
+    std::condition_variable _cv_stopping;
 
     /**
      * Vector of actual threads that perorm execution
      */
-    std::vector<std::thread> threads;
+    std::vector<std::thread> _threads;
 
     /**
      * Task queue
      */
-    std::deque<std::function<void()>> tasks;
+    std::deque<std::function<void()>> _tasks;
 
     /**
      * Flag to stop bg threads
      */
-    State state;
+    std::atomic<State> _state;
+    
+    /**
+     * Parameters of the pool
+     */
+    const int _low_watermark;
+    const int _hight_watermark;
+    const int _max_queue_size;
+    const int _idle_time;
+    std::atomic<int> _free_threads;
+    
+    void _add_thread();
 };
+
+void perform(Executor *executor);
 
 } // namespace Afina
 
