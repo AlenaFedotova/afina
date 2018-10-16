@@ -21,7 +21,6 @@
 #include <afina/Storage.h>
 #include <afina/logging/Service.h>
 
-#include "Connection.h"
 #include "Utils.h"
 
 namespace Afina {
@@ -91,6 +90,11 @@ void ServerImpl::Stop() {
     if (eventfd_write(_event_fd, 1)) {
         throw std::runtime_error("Failed to wakeup workers");
     }
+    for (auto pc : _conns) {
+        close(pc->_socket);
+        delete pc;
+    }
+    _conns.clear();
 }
 
 // See Server.h
@@ -124,6 +128,7 @@ void ServerImpl::OnRun() {
     bool run = true;
     std::array<struct epoll_event, 64> mod_list;
     while (run) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
         int nmod = epoll_wait(epoll_descr, &mod_list[0], mod_list.size(), -1);
         _logger->debug("Acceptor wokeup: {} events", nmod);
 
@@ -163,21 +168,24 @@ void ServerImpl::OnRun() {
                 }
 
                 close(pc->_socket);
-                pc->OnClose();
+                //pc->OnClose();
 
+                _conns.erase(pc);
                 delete pc;
             } else if (pc->_event.events != old_mask) {
                 if (epoll_ctl(epoll_descr, EPOLL_CTL_MOD, pc->_socket, &pc->_event)) {
                     _logger->error("Failed to change connection event mask");
+                    std::cerr << "Failed to change connection event mask\n";
                 }
-
+                /*                        ?????????
                 close(pc->_socket);
                 pc->OnClose();
 
                 delete pc;
+                */
             }
-        }
-    }
+        } // for (int i = 0; i < nmod; i++)
+    } // while (run)
     _logger->warn("Acceptor stopped");
 }
 
@@ -207,7 +215,8 @@ void ServerImpl::OnNewConnection(int epoll_descr) {
         }
 
         // Register the new FD to be monitored by epoll.
-        Connection *pc = new Connection(infd);
+        Connection *pc = new Connection(infd, pStorage);
+        _conns.insert(pc);
         if (pc == nullptr) {
             throw std::runtime_error("Failed to allocate connection");
         }
@@ -217,6 +226,7 @@ void ServerImpl::OnNewConnection(int epoll_descr) {
         if (pc->isAlive()) {
             if (epoll_ctl(epoll_descr, EPOLL_CTL_ADD, pc->_socket, &pc->_event)) {
                 pc->OnError();
+                _conns.erase(pc);
                 delete pc;
             }
         }
