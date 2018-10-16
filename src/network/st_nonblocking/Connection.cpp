@@ -78,10 +78,6 @@ void Connection::DoRead() {
 
                     // Save response
                     _answers.push_back(result);
-                    struct iovec tmp;
-                    tmp.iov_len = _answers.back().size();
-                    tmp.iov_base = &(_answers.back()[0]);
-                    _iovecs.push_back(tmp);
                     
                     _event.events = mask_read_write;
 
@@ -100,25 +96,25 @@ void Connection::DoRead() {
 // See Connection.h
 void Connection::DoWrite() { 
     std::cout << "DoWrite" << std::endl;
+    struct iovec iovecs[_answers.size()];
+    for (int i = 0; i < _answers.size(); i++) {
+        iovecs[i].iov_len = _answers[i].size();
+        iovecs[i].iov_base = &(_answers[i][0]);
+    }
+    iovecs[0].iov_base = static_cast<char*>(iovecs[0].iov_base) + _position;
     int written;
-    if ((written = writev(_socket, _iovecs.data(), _iovecs.size())) <= 0) {
+    if ((written = writev(_socket, iovecs, _answers.size())) <= 0) {
         std::cerr << "Failed to send response\n";
     }
     _position += written;
-    int N = 0;
     int i = 0;
-    while (N < _position) {
-        N += _answers[i].size();
+    while (i < _answers.size() && _position - _answers[i].size() >= 0) {
+        _position -= _answers[i].size();
         i++;
     }
-    _position -= N;
     _answers.erase(_answers.begin(), _answers.begin() + i);
-    _iovecs.erase(_iovecs.begin(), _iovecs.begin() + i);
-    if (_iovecs.size() == 0) {
+    if (_answers.size() == 0) {
         _event.events = mask_read;
-    }
-    else {
-        _iovecs[0].iov_base = static_cast<char*>(_iovecs[0].iov_base) + _position;
     }
 }
 

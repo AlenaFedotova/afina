@@ -50,7 +50,6 @@ private:
     
     std::shared_ptr<Afina::Storage> pStorage;
     
-    std::vector<struct iovec> _iovecs;
     std::vector<std::string> _answers;
     int _position = 0;
     
