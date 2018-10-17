@@ -56,9 +56,8 @@ public:
     template <typename F, typename... Types> bool Execute(F &&func, Types... args) {
         // Prepare "task"
         auto exec = std::bind(std::forward<F>(func), std::forward<Types>(args)...);
-        int cur_free;
         {
-            std::unique_lock<std::mutex> lock(this->_tasks_mutex);
+            std::unique_lock<std::mutex> lock(this->_mutex);
             if (_state.load() != State::kRun || _tasks.size() >= _max_queue_size) {
                 std::cout << "queue is full\n";
                 return false;
@@ -66,11 +65,10 @@ public:
 
             // Enqueue new task
             _tasks.push_back(exec);
-            cur_free = _free_threads.load();
+            if (_free_threads == 0 && _threads.size() < _hight_watermark) {
+                _add_thread();
+            } 
             _empty_condition.notify_one();
-        }
-        if (cur_free == 0) {
-            _add_thread();
         }
         return true;
     }
@@ -90,8 +88,7 @@ private:
     /**
      * Mutex to protect state below from concurrent modification
      */
-    std::mutex _tasks_mutex;
-    std::mutex _threads_mutex;
+    std::mutex _mutex;
 
     /**
      * Conditional variable to await new data in case of empty queue
@@ -125,7 +122,7 @@ private:
     const int _hight_watermark;
     const int _max_queue_size;
     const int _idle_time;
-    std::atomic<int> _free_threads;
+    int _free_threads;
     
     void _add_thread();
 };
