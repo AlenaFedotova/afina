@@ -10,28 +10,25 @@ namespace Network {
 namespace STnonblock {
 
 // See Connection.h
-void Connection::Start() { 
-    std::cout << "Start" << std::endl; 
+void Connection::Start(std::shared_ptr<spdlog::logger> logger) { 
     _event.events = mask_read;
     _event.data.fd = _socket;
     _event.data.ptr = this;
+    _logger = logger;
 }
 
 // See Connection.h
 void Connection::OnError() { 
-    std::cout << "OnError" << std::endl; 
     _isAlive = false;
 }
 
 // See Connection.h
 void Connection::OnClose() { 
-    std::cout << "OnClose" << std::endl; 
     _isAlive = false;
 }
 
 // See Connection.h
 void Connection::DoRead() { 
-    std::cout << "DoRead" << std::endl; 
     try {
         int readed_bytes_new = -1;
         while ((readed_bytes_new = read(_socket, client_buffer + readed_bytes, sizeof(client_buffer) - readed_bytes)) > 0) {
@@ -89,22 +86,22 @@ void Connection::DoRead() {
             } // while (readed_bytes)
         }
     } catch (std::runtime_error &ex) {
-        std::cerr << "Failed to process connection on descriptor" << _socket << ": " << ex.what() << std::endl;
+        _logger->error("Failed to process connection on descriptor {} : {}", _socket, ex.what());
     }
 }
 
 // See Connection.h
 void Connection::DoWrite() { 
-    std::cout << "DoWrite" << std::endl;
     struct iovec iovecs[_answers.size()];
     for (int i = 0; i < _answers.size(); i++) {
         iovecs[i].iov_len = _answers[i].size();
         iovecs[i].iov_base = &(_answers[i][0]);
     }
     iovecs[0].iov_base = static_cast<char*>(iovecs[0].iov_base) + _position;
+    iovecs[0].iov_len -= _position;
     int written;
     if ((written = writev(_socket, iovecs, _answers.size())) <= 0) {
-        std::cerr << "Failed to send response\n";
+        _logger->error("Failed to send response");
     }
     _position += written;
     int i = 0;
@@ -113,7 +110,7 @@ void Connection::DoWrite() {
         i++;
     }
     _answers.erase(_answers.begin(), _answers.begin() + i);
-    if (_answers.size() == 0) {
+    if (_answers.empty()) {
         _event.events = mask_read;
     }
 }

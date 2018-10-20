@@ -11,6 +11,11 @@
 #include <afina/execute/Command.h>
 #include <afina/Storage.h>
 #include "protocol/Parser.h"
+#include <spdlog/logger.h>
+
+namespace spdlog {
+class logger;
+}
 
 namespace Afina {
 namespace Network {
@@ -25,7 +30,7 @@ public:
 
     inline bool isAlive() const { return _isAlive; }
 
-    void Start();
+    void Start(std::shared_ptr<spdlog::logger> logger);
 
 protected:
     void OnError();
@@ -55,6 +60,8 @@ private:
     
     const int mask_read = EPOLLIN | EPOLLRDHUP | EPOLLERR;
     const int mask_read_write = EPOLLIN | EPOLLRDHUP | EPOLLERR | EPOLLOUT;
+    
+    std::shared_ptr<spdlog::logger> _logger;
 };
 
 } // namespace STnonblock

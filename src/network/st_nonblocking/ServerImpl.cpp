@@ -128,7 +128,7 @@ void ServerImpl::OnRun() {
     bool run = true;
     std::array<struct epoll_event, 64> mod_list;
     while (run) {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+       // std::this_thread::sleep_for(std::chrono::seconds(1));
         int nmod = epoll_wait(epoll_descr, &mod_list[0], mod_list.size(), -1);
         _logger->debug("Acceptor wokeup: {} events", nmod);
 
@@ -175,14 +175,7 @@ void ServerImpl::OnRun() {
             } else if (pc->_event.events != old_mask) {
                 if (epoll_ctl(epoll_descr, EPOLL_CTL_MOD, pc->_socket, &pc->_event)) {
                     _logger->error("Failed to change connection event mask");
-                    std::cerr << "Failed to change connection event mask\n";
                 }
-                /*                        ?????????
-                close(pc->_socket);
-                pc->OnClose();
-
-                delete pc;
-                */
             }
         } // for (int i = 0; i < nmod; i++)
     } // while (run)
@@ -222,7 +215,7 @@ void ServerImpl::OnNewConnection(int epoll_descr) {
         }
 
         // Register connection in worker's epoll
-        pc->Start();
+        pc->Start(_logger);
         if (pc->isAlive()) {
             if (epoll_ctl(epoll_descr, EPOLL_CTL_ADD, pc->_socket, &pc->_event)) {
                 pc->OnError();

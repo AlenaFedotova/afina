@@ -24,6 +24,9 @@ namespace Afina {
 class Executor {
 public:
     enum class State {
+        // Threadpool is ready to start
+        kReady,
+    
         // Threadpool is fully operational, tasks could be added and get executed
         kRun,
 
@@ -37,6 +40,11 @@ public:
 
     Executor(std::string name, int low_watermark, int hight_watermark, int max_queue_size, int idle_time);
     ~Executor();
+    
+    /**
+     * Creating low_watermark of threads.
+     */
+    void Start(std::shared_ptr<spdlog::logger> logger);
 
     /**
      * Signal thread pool to stop, it will stop accepting new jobs and close threads just after each become
@@ -59,7 +67,7 @@ public:
         {
             std::unique_lock<std::mutex> lock(this->_mutex);
             if (_state.load() != State::kRun || _tasks.size() >= _max_queue_size) {
-                std::cout << "queue is full\n";
+                _logger->debug("queue is full");
                 return false;
             }
 
@@ -72,6 +80,8 @@ public:
         }
         return true;
     }
+    
+    void set_logger();
 
 private:
     // No copy/move/assign allowed
@@ -123,6 +133,8 @@ private:
     const int _max_queue_size;
     const int _idle_time;
     int _free_threads;
+    
+    std::shared_ptr<spdlog::logger> _logger;
     
     void _add_thread();
 };

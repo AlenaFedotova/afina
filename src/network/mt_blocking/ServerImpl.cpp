@@ -28,7 +28,7 @@ namespace Network {
 namespace MTblocking {
 
 // See Server.h
-ServerImpl::ServerImpl(std::shared_ptr<Afina::Storage> ps, std::shared_ptr<Logging::Service> pl) : Server(ps, pl), _executor("executor", 10, 20, 10, 3000) {}
+ServerImpl::ServerImpl(std::shared_ptr<Afina::Storage> ps, std::shared_ptr<Logging::Service> pl) : Server(ps, pl), _executor("executor", 2, 4, 10, 3000) {}
 
 // See Server.h
 ServerImpl::~ServerImpl() {}
@@ -37,6 +37,8 @@ ServerImpl::~ServerImpl() {}
 void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
     _logger = pLogging->select("network");
     _logger->info("Start mt_blocking network service");
+    
+    _executor.Start(_logger);
 
     sigset_t sig_mask;
     sigemptyset(&sig_mask);
@@ -146,14 +148,14 @@ void ServerImpl::_WorkerFunction(int client_socket) {
         int readed_bytes = -1;
         char client_buffer[4096];
         while (_running.load() && (readed_bytes = read(client_socket, client_buffer, sizeof(client_buffer))) > 0) {
-            _logger->debug("Got {} bytes from socket", readed_bytes);
+            _logger->debug("Got {} bytes from socket: {}", readed_bytes, client_buffer);
 
             // Single block of data readed from the socket could trigger inside actions a multiple times,
             // for example:
             // - read#0: [<command1 start>]
             // - read#1: [<command1 end> <argument> <command2> <argument for command 2> <command3> ... ]
             while (_running.load() && readed_bytes > 0) {
-                std::this_thread::sleep_for(std::chrono::seconds(3));
+               // std::this_thread::sleep_for(std::chrono::seconds(3));
                 _logger->debug("Process {} bytes", readed_bytes);
                 // There is no command yet
                 if (!command_to_execute) {
@@ -196,6 +198,7 @@ void ServerImpl::_WorkerFunction(int client_socket) {
 
                     std::string result;
                     command_to_execute->Execute(*pStorage, argument_for_command, result);
+                    result += '\n';
 
                     // Send response
                     if (send(client_socket, result.data(), result.size(), 0) <= 0) {

@@ -7,6 +7,15 @@ namespace Afina {
 
 // See Executor.h
 Executor::Executor(std::string name, int low_watermark, int hight_watermark, int max_queue_size, int idle_time) : _low_watermark(low_watermark), _hight_watermark(hight_watermark), _max_queue_size(max_queue_size), _idle_time(idle_time) {
+    _state.store(State::kReady);
+}
+
+// See Executor.h
+Executor::~Executor() {}
+
+// See Executor.h
+void Executor::Start(std::shared_ptr<spdlog::logger> logger) {
+    _logger = logger;
     _state.store(State::kRun);
     std::unique_lock<std::mutex> lock(this->_mutex);
     for (int i = 0; i < _low_watermark; i++) {
@@ -14,9 +23,6 @@ Executor::Executor(std::string name, int low_watermark, int hight_watermark, int
     }
     _free_threads = 0;
 }
-
-// See Executor.h
-Executor::~Executor() {}
 
 // See Executor.h
 void Executor::Stop(bool await) {
@@ -33,14 +39,13 @@ void Executor::Stop(bool await) {
 
 // See Executor.h
 void perform(Executor *executor) {
-    std::cout << "new thread\n";
+    executor->_logger->debug("new thread");
     while (executor->_state.load() == Executor::State::kRun) {
-        std::cout << "new iteration\n";
         std::function<void()> task;
         {
             std::unique_lock<std::mutex> lock(executor->_mutex);
             while (executor->_tasks.size() == 0 && executor->_state.load() == Executor::State::kRun) {
-                std::cout << "waiting\n";
+                executor->_logger->debug("waiting");
                 executor->_free_threads++;
                 if (executor->_empty_condition.wait_for(lock, std::chrono::milliseconds(executor->_idle_time)) == std::cv_status::timeout) {
                     if (executor->_threads.size() > executor->_low_watermark) {
@@ -50,7 +55,7 @@ void perform(Executor *executor) {
                             iter->detach();
                             executor->_free_threads--; 
                             executor->_threads.erase(iter);
-                            std::cout << "i died\n";
+                            executor->_logger->debug("i died");
                         }
                         return;
                     }
@@ -60,7 +65,7 @@ void perform(Executor *executor) {
                 }
                 executor->_free_threads--; 
             }
-            std::cout << "stop waiting\n";
+            executor->_logger->debug("stop waiting");
             if (executor->_tasks.size() == 0) {
                 continue;
             }
