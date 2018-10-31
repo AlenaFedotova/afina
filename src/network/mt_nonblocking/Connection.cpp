@@ -12,6 +12,7 @@ void Connection::Start(std::shared_ptr<spdlog::logger> logger) {
     _event.data.fd = _socket;
     _event.data.ptr = this;
     _logger = logger;
+    _sync_read.store(true);
 }
 
 // See Connection.h
