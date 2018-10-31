@@ -45,7 +45,7 @@ void perform(Executor *executor) {
         {
             std::unique_lock<std::mutex> lock(executor->_mutex);
             auto time_until = std::chrono::system_clock::now() + std::chrono::milliseconds(executor->_idle_time);
-            while (executor->_tasks.size() == 0 && executor->_state.load() == Executor::State::kRun) {
+            while (executor->_tasks.empty() && executor->_state.load() == Executor::State::kRun) {
                 executor->_logger->debug("waiting");
                 executor->_free_threads++;
                 if (executor->_empty_condition.wait_until(lock, time_until) == std::cv_status::timeout) {
@@ -71,7 +71,7 @@ void perform(Executor *executor) {
     {
         std::unique_lock<std::mutex> lock(executor->_mutex);
         executor->_erase_thread();
-        if (executor->_threads.size() == 0) {
+        if (executor->_threads.empty()) {
             executor->_cv_stopping.notify_all();
         }
     }
