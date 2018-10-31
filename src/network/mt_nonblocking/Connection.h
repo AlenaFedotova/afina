@@ -43,6 +43,15 @@ protected:
 private:
     friend class Worker;
     friend class ServerImpl;
+    
+    static const int mask_read = EPOLLIN | EPOLLRDHUP | EPOLLERR | EPOLLONESHOT;
+    static const int mask_read_write = EPOLLIN | EPOLLRDHUP | EPOLLERR | EPOLLOUT | EPOLLONESHOT;
+    
+    std::shared_ptr<spdlog::logger> _logger;
+    std::shared_ptr<Afina::Storage> pStorage;
+    
+    std::mutex _mutex;
+    std::atomic<bool> _sync_read;
 
     int _socket;
     std::atomic<bool> _isAlive;
@@ -56,17 +65,8 @@ private:
     int readed_bytes = 0;
     char client_buffer[4096];
     
-    std::shared_ptr<Afina::Storage> pStorage;
-    
     std::vector<std::string> _answers;
     int _position = 0;
-    
-    const int mask_read = EPOLLIN | EPOLLRDHUP | EPOLLERR | EPOLLONESHOT;
-    const int mask_read_write = EPOLLIN | EPOLLRDHUP | EPOLLERR | EPOLLOUT | EPOLLONESHOT;
-    
-    std::shared_ptr<spdlog::logger> _logger;
-    
-    std::mutex _mutex;
 };
 
 } // namespace MTnonblock

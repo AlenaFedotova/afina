@@ -67,7 +67,7 @@ public:
         {
             std::unique_lock<std::mutex> lock(this->_mutex);
             if (_state.load() != State::kRun || _tasks.size() >= _max_queue_size) {
-                _logger->debug("queue is full");
+                _logger->warn("can't add task");
                 return false;
             }
 
@@ -137,6 +137,7 @@ private:
     std::shared_ptr<spdlog::logger> _logger;
     
     void _add_thread();
+    void _erase_thread();
 };
 
 void perform(Executor *executor);

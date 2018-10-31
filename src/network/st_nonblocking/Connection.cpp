@@ -98,17 +98,21 @@ void Connection::DoWrite() {
         iovecs[i].iov_base = &(_answers[i][0]);
     }
     iovecs[0].iov_base = static_cast<char*>(iovecs[0].iov_base) + _position;
+    
+    assert(iovecs[0].iov_len > _position);
     iovecs[0].iov_len -= _position;
+    
     int written;
     if ((written = writev(_socket, iovecs, _answers.size())) <= 0) {
         _logger->error("Failed to send response");
     }
     _position += written;
+    
     int i = 0;
-    while (i < _answers.size() && _position - _answers[i].size() >= 0) {
-        _position -= _answers[i].size();
-        i++;
+    for (; i < _answers.size() && (_position - iovecs[i].iov_len) >= 0; i++) {
+        _position -= iovecs[i].iov_len;
     }
+    
     _answers.erase(_answers.begin(), _answers.begin() + i);
     if (_answers.empty()) {
         _event.events = mask_read;

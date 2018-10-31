@@ -26,7 +26,7 @@ void Connection::OnClose() {
 
 // See Connection.h
 void Connection::DoRead() { 
-    std::lock_guard<std::mutex> lock(_mutex);
+    auto tmp = _sync_read.load();
     try {
         int readed_bytes_new = -1;
         while ((readed_bytes_new = read(_socket, client_buffer + readed_bytes, sizeof(client_buffer) - readed_bytes)) > 0) {
@@ -72,9 +72,11 @@ void Connection::DoRead() {
                     result += "\n";
 
                     // Save response
-                    _answers.push_back(result);
-                    
-                    _event.events = mask_read_write;
+                    {
+                        std::lock_guard<std::mutex> lock(_mutex);
+                        _answers.push_back(result);
+                        _event.events = mask_read_write;
+                    }
 
                     // Prepare for the next command
                     command_to_execute.reset();
@@ -86,34 +88,47 @@ void Connection::DoRead() {
     } catch (std::runtime_error &ex) {
         _logger->error("Failed to process connection on descriptor {} : {}", _socket, ex.what());
     }
+    _sync_read.store(true);
 }
 
 // See Connection.h
-void Connection::DoWrite() { 
-    std::lock_guard<std::mutex> lock(_mutex);
-    struct iovec iovecs[_answers.size()];
-    for (int i = 0; i < _answers.size(); i++) {
-        iovecs[i].iov_len = _answers[i].size();
-        iovecs[i].iov_base = &(_answers[i][0]);
+void Connection::DoWrite() {
+    struct iovec *iovecs;
+    std::size_t ans_size;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        ans_size = _answers.size();
+        iovecs = new struct iovec[ans_size];
+        for (int i = 0; i < _answers.size(); i++) {
+            iovecs[i].iov_len = _answers[i].size();
+            iovecs[i].iov_base = &(_answers[i][0]);
+        }
     }
     iovecs[0].iov_base = static_cast<char*>(iovecs[0].iov_base) + _position;
+    
+    assert(iovecs[0].iov_len > _position);
     iovecs[0].iov_len -= _position;
+    
     int written;
-    if ((written = writev(_socket, iovecs, _answers.size())) <= 0) {
+    if ((written = writev(_socket, iovecs, ans_size)) <= 0) {
         _logger->error("Failed to send response");
     }
     _position += written;
+    
     int i = 0;
-    while (i < _answers.size() && _position - _answers[i].size() >= 0) {
-        _position -= _answers[i].size();
-        i++;
+    for (; i < ans_size && (_position - iovecs[i].iov_len) >= 0; i++) {
+        _position -= iovecs[i].iov_len;
     }
-    _answers.erase(_answers.begin(), _answers.begin() + i);
-    if (_answers.empty()) {
-        _event.events = mask_read;
+    
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _answers.erase(_answers.begin(), _answers.begin() + i);
+        if (_answers.empty()) {
+            _event.events = mask_read;
+        }
     }
+    delete[] iovecs;
 }
-
 } // namespace MTnonblock
 } // namespace Network
 } // namespace Afina

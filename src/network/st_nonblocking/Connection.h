@@ -40,6 +40,12 @@ protected:
 
 private:
     friend class ServerImpl;
+    
+    static const int mask_read = EPOLLIN | EPOLLRDHUP | EPOLLERR;
+    static const int mask_read_write = EPOLLIN | EPOLLRDHUP | EPOLLERR | EPOLLOUT;
+    
+    std::shared_ptr<spdlog::logger> _logger;
+    std::shared_ptr<Afina::Storage> pStorage;
 
     int _socket;
     bool _isAlive;
@@ -53,15 +59,8 @@ private:
     int readed_bytes = 0;
     char client_buffer[4096];
     
-    std::shared_ptr<Afina::Storage> pStorage;
-    
     std::vector<std::string> _answers;
     int _position = 0;
-    
-    const int mask_read = EPOLLIN | EPOLLRDHUP | EPOLLERR;
-    const int mask_read_write = EPOLLIN | EPOLLRDHUP | EPOLLERR | EPOLLOUT;
-    
-    std::shared_ptr<spdlog::logger> _logger;
 };
 
 } // namespace STnonblock

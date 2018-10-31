@@ -30,7 +30,7 @@ void Executor::Stop(bool await) {
     _empty_condition.notify_all();
     {
         std::unique_lock<std::mutex> lock(_mutex);
-        while (_threads.size() != 0) {
+        while (!_threads.empty()) {
             _cv_stopping.wait(lock);
         }
     }
@@ -44,19 +44,13 @@ void perform(Executor *executor) {
         std::function<void()> task;
         {
             std::unique_lock<std::mutex> lock(executor->_mutex);
+            auto time_until = std::chrono::system_clock::now() + std::chrono::milliseconds(executor->_idle_time);
             while (executor->_tasks.size() == 0 && executor->_state.load() == Executor::State::kRun) {
                 executor->_logger->debug("waiting");
                 executor->_free_threads++;
-                if (executor->_empty_condition.wait_for(lock, std::chrono::milliseconds(executor->_idle_time)) == std::cv_status::timeout) {
+                if (executor->_empty_condition.wait_until(lock, time_until) == std::cv_status::timeout) {
                     if (executor->_threads.size() > executor->_low_watermark) {
-                        std::thread::id this_id = std::this_thread::get_id();
-                        auto iter = std::find_if(executor->_threads.begin(), executor->_threads.end(), [=](std::thread &t) { return (t.get_id() == this_id); });
-                        if (iter != executor->_threads.end()) {
-                            iter->detach();
-                            executor->_free_threads--; 
-                            executor->_threads.erase(iter);
-                            executor->_logger->debug("i died");
-                        }
+                        executor->_erase_thread();
                         return;
                     }
                     else {
@@ -66,7 +60,7 @@ void perform(Executor *executor) {
                 executor->_free_threads--; 
             }
             executor->_logger->debug("stop waiting");
-            if (executor->_tasks.size() == 0) {
+            if (executor->_tasks.empty()) {
                 continue;
             }
             task = executor->_tasks.front();
@@ -76,16 +70,24 @@ void perform(Executor *executor) {
     }
     {
         std::unique_lock<std::mutex> lock(executor->_mutex);
-        std::thread::id this_id = std::this_thread::get_id();
-        auto iter = std::find_if(executor->_threads.begin(), executor->_threads.end(), [=](std::thread &t) { return (t.get_id() == this_id); });
-        if (iter != executor->_threads.end()) {
-            iter->detach();
-            executor->_threads.erase(iter);
-        }
+        executor->_erase_thread();
         if (executor->_threads.size() == 0) {
             executor->_cv_stopping.notify_all();
         }
     }
+}
+
+void Executor::_erase_thread() {
+    std::thread::id this_id = std::this_thread::get_id();
+    auto iter = std::find_if(_threads.begin(), _threads.end(), [=](std::thread &t) { return (t.get_id() == this_id); });
+    if (iter != _threads.end()) {
+        iter->detach();
+        _free_threads--; 
+        _threads.erase(iter);
+        _logger->debug("i died");
+        return;
+    }
+    throw std::runtime_error("error while erasing thread");
 }
 
 void Executor::_add_thread() {
