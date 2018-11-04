@@ -39,7 +39,7 @@ void Engine::Restore(context &ctx) {
 }
 
 void Engine::Enter(context& ctx) {
-    if (cur_routine) {
+    if (cur_routine && cur_routine != idle_ctx) {
         if (setjmp(cur_routine->Environment) > 0) {
             return;
         }
