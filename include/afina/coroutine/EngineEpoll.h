@@ -10,16 +10,6 @@
 #include <cassert>
 #include <cstring>
 
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <signal.h>
-#include <sys/epoll.h>
-#include <sys/eventfd.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <unistd.h>
-
 namespace Afina {
 namespace Network {
 namespace Coroutine {
@@ -52,7 +42,7 @@ private:
         struct context *prev = nullptr;
         struct context *next = nullptr;
         
-        bool block;
+        bool block = false;
         
         int events = 0;
     } context;
@@ -82,15 +72,7 @@ private:
      */
     context *idle_ctx;
     
-    static const int mask_read = EPOLLIN | EPOLLRDHUP | EPOLLERR;
-    static const int mask_write = EPOLLRDHUP | EPOLLERR | EPOLLOUT;
-    
-    int _epoll_descr;
-    int _event_fd;
-    bool _running;
-    
     void _swap_list(context * &list1, context * &list2, context * const &routine);
-    void _wait_in_epoll(int fd, int mask);
 
 protected:
     /**
@@ -107,19 +89,9 @@ protected:
      * Suspend current coroutine execution and execute given context
      */
     void Enter(context& ctx);
-    
-    /**
-     * Block current coroutine
-     */
-    void Wait();
-    
-    /**
-     * Unlock current coroutine
-     */
-    void Notify(context& ctx);
 
 public:
-    Engine() : StackBottom(0), cur_routine(nullptr), alive(nullptr), blocked(nullptr), _running(false) {}
+    Engine() : StackBottom(0), cur_routine(nullptr), alive(nullptr), blocked(nullptr) {}
     Engine(Engine &&) = delete;
     Engine(const Engine &) = delete;
 
@@ -141,13 +113,25 @@ public:
      * of the current routine, if there is no caller then this method has same semantics as yield
      */
     void sched(void *routine);
-
+    
     /**
-     * Functions for server
+     * Block current coroutine
      */
-    int Read(int fd, void *buf, unsigned count);
-    int Write(int handle, const void *buf, int count);
-    int Accept(int s, struct sockaddr * addr, unsigned int * anamelen);
+    void Wait();
+    
+    /**
+     * Unlock current coroutine
+     */
+    void Notify(context &ctx);
+    
+    /**
+     * Functions to help server
+     */
+    int GetCurEvents() const;
+    int SetEventsAndNotify(void * ptr, int events);
+    void NotifyAll();
+    bool NeedWait() const;
+    void * GetCurRoutinePointer() const;
 
     /**
      * Entry point into the engine. Prepare all internal mechanics and starts given function which is
@@ -159,27 +143,10 @@ public:
      * @param pointer to the main coroutine
      * @param arguments to be passed to the main coroutine
      */
-    template <typename Tf, typename... Ta> void start(Tf && main, Ta &&... args) {
-        _running = true;
-
-        _epoll_descr = epoll_create1(0);
-
-        _event_fd = eventfd(0, EFD_NONBLOCK);
-        if (_event_fd == -1) {
-            throw std::runtime_error("Failed to create epoll file descriptor: " + std::string(strerror(errno)));
-        }
-    
-        struct epoll_event event;
-        event.events = EPOLLIN;
-        event.data.fd = _event_fd;
-        if (epoll_ctl(_epoll_descr, EPOLL_CTL_ADD, _event_fd, &event)) {
-            throw std::runtime_error("Failed to add file descriptor to epoll");
-        }
+    template <typename Tf, typename... Ta, typename Ti> void start(Ti && IdleFunc, Tf && main, Ta &&... args) {
         // To acquire stack begin, create variable on stack and remember its address
         char StackStartsHere;
         this->StackBottom = &StackStartsHere;
-        int nmod;
-        std::array<struct epoll_event, 64> mod_list;
 
         // Start routine execution
         void *pc = run(main, std::forward<Ta>(args)...);
@@ -193,22 +160,7 @@ public:
             sched(pc);
         }
         
-        while (blocked && !alive) {
-            nmod = epoll_wait(_epoll_descr, &mod_list[0], mod_list.size(), -1);
-            for (int i = 0; i < nmod; i++) {
-                struct epoll_event &current_event = mod_list[i];
-                if (current_event.data.fd == _event_fd) {
-                    for (auto ptr = blocked; ptr; ptr = blocked) {
-                        Notify(*ptr);
-                    }
-                    continue;
-                }
-                context * ptr = static_cast<context *>(current_event.data.ptr);
-                ptr->events |= current_event.events;
-                Notify(*ptr);
-            }
-        }
-        yield();
+        IdleFunc();
 
         // Shutdown runtime
         delete idle_ctx;
@@ -222,7 +174,7 @@ public:
      * errors function returns -1
      */
     template <typename Tf, typename... Ta> void *run(Tf && func, Ta &&... args) {
-        if (!_running) {
+        if (this->StackBottom == 0) {
             // Engine wasn't initialized yet
             return nullptr;
         }

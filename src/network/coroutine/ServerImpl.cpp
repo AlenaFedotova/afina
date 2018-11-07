@@ -9,12 +9,12 @@
 
 #include <arpa/inet.h>
 #include <netdb.h>
-#include <netinet/in.h>
 #include <pthread.h>
 #include <signal.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <sys/eventfd.h>
 
 #include <spdlog/logger.h>
 
@@ -74,15 +74,30 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
         throw std::runtime_error("Socket listen() failed");
     }
 
+    _epoll_descr = epoll_create1(0);
+
+    _event_fd = eventfd(0, EFD_NONBLOCK);
+    if (_event_fd == -1) {
+        throw std::runtime_error("Failed to create epoll file descriptor: " + std::string(strerror(errno)));
+    }
+    
+    struct epoll_event event;
+    event.events = EPOLLIN;
+    event.data.fd = _event_fd;
+    if (epoll_ctl(_epoll_descr, EPOLL_CTL_ADD, _event_fd, &event)) {
+        throw std::runtime_error("Failed to add file descriptor to epoll");
+    }
+
     _running = true;
-    //_thread = std::thread(&Engine::start(&ServerImpl::OnRun, this), &_engine);
-    _thread = std::thread([this] { this->_engine.start([this] { this->OnRun(); }); });
+    _thread = std::thread([this] { this->_engine.start([this] { this->_idle_func(); }, [this] { this->OnRun(); }); });
 }
 
 // See Server.h
 void ServerImpl::Stop() {
     _running = false;
-    _engine.Stop();
+    if (eventfd_write(_event_fd, 1)) {
+        throw std::runtime_error("Failed to wakeup");
+    }
 }
 
 // See Server.h
@@ -101,7 +116,7 @@ void ServerImpl::OnRun() {
         int client_socket;
         struct sockaddr client_addr;
         socklen_t client_addr_len = sizeof(client_addr);
-        if ((client_socket = _engine.Accept(_server_socket, (struct sockaddr *)&client_addr, &client_addr_len)) == -1) {
+        if ((client_socket = _accept(_server_socket, (struct sockaddr *)&client_addr, &client_addr_len)) == -1) {
             continue;
         }
 
@@ -145,7 +160,7 @@ void ServerImpl::_WorkerFunction(int client_socket) {
     try {
         int readed_bytes = -1;
         char client_buffer[4096];
-        while (_running && (readed_bytes = _engine.Read(client_socket, client_buffer, sizeof(client_buffer))) > 0) {
+        while (_running && (readed_bytes = _read(client_socket, client_buffer, sizeof(client_buffer))) > 0) {
             _logger->debug("Got {} bytes from socket", readed_bytes);
 
             // Single block of data readed from the socket could trigger inside actions a multiple times,
@@ -199,7 +214,7 @@ void ServerImpl::_WorkerFunction(int client_socket) {
                     result += '\n';
 
                     // Send response
-                    int written = _engine.Write(client_socket, result.data(), result.size());
+                    int written = _write(client_socket, result.data(), result.size());
                     if (written < 0) {
                         break;
                     }
@@ -223,6 +238,93 @@ void ServerImpl::_WorkerFunction(int client_socket) {
     
     close(client_socket);
     // We are done with this connection
+}
+
+int ServerImpl::_read(int fd, void *buf, unsigned count) {
+    while (_running) {
+        int readed_bytes = read(fd, buf, count);
+        if (readed_bytes <= 0) {
+            _wait_in_epoll(fd, mask_read);
+            int events = _engine.GetCurEvents();
+            if (events & EPOLLRDHUP) {
+                return 0;
+            }
+            if (events & (EPOLLERR | EPOLLHUP)) {
+                break;
+            }
+        }
+        else {
+            return readed_bytes;
+        }
+    }
+    return -1;
+}
+
+int ServerImpl::_write(int fd, const void *buf, int count) {
+    int written = 0;
+    while (_running) {
+        written += write(fd, (char *)buf + written, count - written);
+        if (written < count) {
+            _wait_in_epoll(fd, mask_write);
+            int events = _engine.GetCurEvents();
+            if (events & (EPOLLRDHUP | EPOLLERR | EPOLLHUP)) {
+                break;
+            }
+        }
+        else {
+            return written;
+        }
+    }
+    return -1;
+}
+
+int ServerImpl::_accept(int s, struct sockaddr * addr, unsigned int * anamelen) {
+    while (_running) {
+        int infd = accept4(s, addr, anamelen, SOCK_NONBLOCK | SOCK_CLOEXEC);
+        if (infd == -1) {
+            _wait_in_epoll(s, EPOLLIN);
+        }
+        else {
+            return infd;
+        }
+    }
+    return -1;
+}
+
+void ServerImpl::_wait_in_epoll(int fd, int mask) {
+    struct epoll_event * event = new struct epoll_event;
+    event->events = mask;
+    event->data.ptr = _engine.GetCurRoutinePointer();
+    
+    if (epoll_ctl(_epoll_descr, EPOLL_CTL_ADD, fd, event)) {
+        throw std::runtime_error("Failed to add file descriptor to epoll");
+    }
+    
+    _engine.Wait();
+    
+    if (epoll_ctl(_epoll_descr, EPOLL_CTL_DEL, fd, event)) {
+        throw std::runtime_error("Failed to delete file descriptor from epoll");
+    }
+    
+    delete event;
+}
+
+void ServerImpl::_idle_func() {
+    int nmod;
+    std::array<struct epoll_event, 64> mod_list;
+    
+    while (_engine.NeedWait()) {
+        nmod = epoll_wait(_epoll_descr, &mod_list[0], mod_list.size(), -1);
+        for (int i = 0; i < nmod; i++) {
+            struct epoll_event &current_event = mod_list[i];
+            if (current_event.data.fd == _event_fd) {
+                _engine.NotifyAll();
+                continue;
+            }
+            _engine.SetEventsAndNotify(current_event.data.ptr, current_event.events);
+        }
+    }
+    _engine.yield();
 }
 
 } // namespace MTblocking

@@ -11,8 +11,13 @@ namespace Coroutine {
 
 void Engine::Store(context &ctx) {
     char stack_end;
-    ctx.Hight = StackBottom;
-    ctx.Low = &stack_end;
+    ctx.Hight = ctx.Low = StackBottom;
+    if (&stack_end > StackBottom) {
+        ctx.Hight = &stack_end;
+    }
+    else {
+        ctx.Low = &stack_end;
+    }
     
     char * &buffer = std::get<0>(ctx.Stack);
     uint32_t &av_size = std::get<1>(ctx.Stack);
@@ -29,7 +34,7 @@ void Engine::Store(context &ctx) {
 
 void Engine::Restore(context &ctx) {
     char stack_end;
-    if (&stack_end >= ctx.Low) {
+    if (&stack_end >= ctx.Low && &stack_end <= ctx.Hight) {
         Restore(ctx);
     }
     
@@ -53,8 +58,18 @@ void Engine::Enter(context& ctx) {
 }
 
 void Engine::yield() {
-    if (alive) {
-        Enter(*alive);
+    context * candidate = alive;
+    
+    if (candidate && candidate == cur_routine) {
+        candidate = candidate->next;
+    }
+    
+    if (candidate) {
+        Enter(*candidate);
+    }
+    
+    if (cur_routine && !cur_routine->block) {
+        return;
     }
     
     if (cur_routine != idle_ctx) {
@@ -63,15 +78,16 @@ void Engine::yield() {
 }
 
 void Engine::sched(void *routine_) {
-    if (routine_) {
-        Enter(*(static_cast<context *>(routine_)));
-    }
-    
-    if (cur_routine) {
+    if (cur_routine == routine_) {
         return;
     }
     
-    yield();
+    if (routine_) {
+        Enter(*(static_cast<context *>(routine_)));
+    }
+    else {
+        yield();
+    }
 }
 
 void Engine::Wait() {
@@ -111,78 +127,28 @@ void Engine::_swap_list(context * &list1, context * &list2, context * const &rou
     }
 }
 
-int Engine::Read(int fd, void *buf, unsigned count) {
-    while (_running) {
-        int readed_bytes = read(fd, buf, count);
-        if (readed_bytes <= 0) {
-            _wait_in_epoll(fd, mask_read);
-            if (cur_routine->events & EPOLLRDHUP) {
-                return 0;
-            }
-            if (cur_routine->events & (EPOLLERR | EPOLLHUP)) {
-                break;
-            }
-        }
-        else {
-            return readed_bytes;
-        }
-    }
-    return -1;
+int Engine::GetCurEvents() const {
+    return cur_routine->events;
 }
 
-int Engine::Write(int fd, const void *buf, int count) {
-    int written = 0;
-    while (_running) {
-        written += write(fd, (char *)buf + written, count - written);
-        if (written < count) {
-            _wait_in_epoll(fd, mask_write);
-            if (cur_routine->events & (EPOLLRDHUP | EPOLLERR | EPOLLHUP)) {
-                break;
-            }
-        }
-        else {
-            return written;
-        }
-    }
-    return -1;
+int Engine::SetEventsAndNotify(void * ptr, int events) {
+    context * con_ptr = static_cast<context *>(ptr);
+    con_ptr->events |= events;
+    Notify(*con_ptr);
 }
 
-int Engine::Accept(int s, struct sockaddr * addr, unsigned int * anamelen) {
-    while (_running) {
-        int infd = accept4(s, addr, anamelen, SOCK_NONBLOCK | SOCK_CLOEXEC);
-        if (infd == -1) {
-            _wait_in_epoll(s, EPOLLIN);
-        }
-        else {
-            return infd;
-        }
+void Engine::NotifyAll() {
+    for (auto ptr = blocked; ptr; ptr = blocked) {
+        Notify(*ptr);
     }
-    return -1;
 }
 
-void Engine::_wait_in_epoll(int fd, int mask) {
-    struct epoll_event * event = new struct epoll_event;
-    event->events = mask;
-    event->data.ptr = cur_routine;
-    
-    if (epoll_ctl(_epoll_descr, EPOLL_CTL_ADD, fd, event)) {
-        throw std::runtime_error("Failed to add file descriptor to epoll");
-    }
-    
-    Wait();
-    
-    if (epoll_ctl(_epoll_descr, EPOLL_CTL_DEL, fd, event)) {
-        throw std::runtime_error("Failed to delete file descriptor from epoll");
-    }
-    
-    delete event;
+bool Engine::NeedWait() const {
+    return blocked && !alive;
 }
 
-void Engine::Stop() {
-    _running = false;
-    if (eventfd_write(_event_fd, 1)) {
-        throw std::runtime_error("Failed to wakeup engine");
-    }
+void * Engine::GetCurRoutinePointer() const {
+    return cur_routine;
 }
 
 } // namespace Coroutine

@@ -6,6 +6,9 @@
 #include <map>
 #include <condition_variable>
 
+#include <sys/epoll.h>
+#include <netinet/in.h>
+
 #include <afina/network/Server.h>
 #include <afina/coroutine/EngineEpoll.h>
 
@@ -52,6 +55,12 @@ private:
     // flag must be atomic in order to safely publisj changes cross thread
     // bounds
     bool _running;
+    
+    static const int mask_read = EPOLLIN | EPOLLRDHUP | EPOLLERR;
+    static const int mask_write = EPOLLRDHUP | EPOLLERR | EPOLLOUT;
+    
+    int _epoll_descr;
+    int _event_fd;
 
     // Server socket to accept connections on
     int _server_socket;
@@ -60,6 +69,14 @@ private:
     std::thread _thread;
     
     void _WorkerFunction(int client_socket);
+    
+    int _read(int fd, void *buf, unsigned count);
+    int _write(int handle, const void *buf, int count);
+    int _accept(int s, struct sockaddr * addr, unsigned int * anamelen);
+    
+    void _wait_in_epoll(int fd, int mask);
+    
+    void _idle_func();
 };
 
 } // namespace MTblocking
