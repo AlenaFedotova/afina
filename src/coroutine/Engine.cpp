@@ -9,8 +9,13 @@ namespace Coroutine {
 
 void Engine::Store(context &ctx) {
     char stack_end;
-    ctx.Hight = StackBottom;
-    ctx.Low = &stack_end;
+    ctx.Hight = ctx.Low = StackBottom;
+    if (&stack_end > StackBottom) {
+        ctx.Hight = &stack_end;
+    }
+    else {
+        ctx.Low = &stack_end;
+    }
     
     char * &buffer = std::get<0>(ctx.Stack);
     uint32_t &av_size = std::get<1>(ctx.Stack);
@@ -27,7 +32,7 @@ void Engine::Store(context &ctx) {
 
 void Engine::Restore(context &ctx) {
     char stack_end;
-    if (&stack_end >= ctx.Low) {
+    if (&stack_end >= ctx.Low && &stack_end <= ctx.Hight) {
         Restore(ctx);
     }
     
@@ -51,21 +56,28 @@ void Engine::Enter(context& ctx) {
 }
 
 void Engine::yield() {
-    if (alive) {
-        Enter(*alive);
+    context * candidate = alive;
+    
+    if (candidate && candidate == cur_routine) {
+        candidate = candidate->next;
+    }
+    
+    if (candidate) {
+        Enter(*candidate);
     }
 }
 
 void Engine::sched(void *routine_) {
-    if (routine_) {
-        Enter(*(static_cast<context *>(routine_)));
-    }
-    
-    if (cur_routine) {
+    if (cur_routine == routine_) {
         return;
     }
     
-    yield();
+    if (routine_) {
+        Enter(*(static_cast<context *>(routine_)));
+    }
+    else {
+        yield();
+    }
 }
 
 } // namespace Coroutine
