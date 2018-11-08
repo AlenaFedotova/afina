@@ -131,7 +131,7 @@ int Engine::GetCurEvents() const {
     return cur_routine->events;
 }
 
-int Engine::SetEventsAndNotify(void * ptr, int events) {
+void Engine::SetEventsAndNotify(void * ptr, int events) {
     context * con_ptr = static_cast<context *>(ptr);
     con_ptr->events |= events;
     Notify(*con_ptr);

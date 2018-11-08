@@ -128,7 +128,7 @@ public:
      * Functions to help server
      */
     int GetCurEvents() const;
-    int SetEventsAndNotify(void * ptr, int events);
+    void SetEventsAndNotify(void * ptr, int events);
     void NotifyAll();
     bool NeedWait() const;
     void * GetCurRoutinePointer() const;
